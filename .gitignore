@@ -1,0 +1,41 @@
+# Virtual environment
+venv/
+.venv/
+env/
+.benv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.coverage
+
+# Generated folders and files
+tests/empty_samples/*
+tests/incorrect_samples/*
+tests/samples/*
+tests/conversion_samples/*
+logs
+logs/*
+
+# DLResearchFlow
