@@ -89,4 +89,3 @@ def build_supervisor_graph():
     # compile and return graph
     graph = graph.compile()
     return graph
-
