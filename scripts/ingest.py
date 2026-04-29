@@ -50,13 +50,22 @@ def load_documents(input_dir: str) -> list:
     Returns
     - List of Document objects with content and metadata (source filename, page number).
     """
+
+    # NOTE: Processing 1990-Elman.pdf gives the following warning due to its formatting:
+    # "Ignoring wrong pointing object 0 0 (offset 0)"
+
+    print(f"📂 Loading documents from: {input_dir}")
     docs = []
 
     for filename in os.listdir(input_dir):
+        print(f"📄 Processing file: {filename}")
         file_path = os.path.join(input_dir, filename)
         if filename.lower().endswith(".pdf"):
-            # Supports PDF files (e.g., using pypdf or LangChain's PyPDFLoader).
-            loader = PyPDFLoader(file_path)
+            # Supports PDF files (using LangChain's PyPDFLoader).
+            loader = PyPDFLoader(
+                file_path,
+                mode="single"
+            )
             pdf_docs = loader.load()
             docs.extend(pdf_docs)
         elif filename.lower().endswith(".txt"):
@@ -64,6 +73,7 @@ def load_documents(input_dir: str) -> list:
             with open(file_path, "r", encoding="utf-8") as f:
                 # Treat as one page, will be chunked later in chunk_documents()
                 content = f.read()
+                # print(f"📄 Loading document: {filename}")
                 docs.append(Document(page_content=content, metadata={"source": filename, "page": 0, "timestamp": os.path.getmtime(file_path)}))
     return docs
 
@@ -78,6 +88,7 @@ def chunk_documents(documents: list) -> list:
     Returns
     - List of Document objects representing chunks, with enriched metadata.
     """
+    print(f"✂️ Chunking {len(documents)} documents into smaller pieces...")
     # Use RecursiveCharacterTextSplitter or sentence-level splitting.
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -102,17 +113,19 @@ def generate_embeddings(chunks: list) -> list:
     Returns
     - List of dicts with 'id', 'embedding', and 'metadata' for each chunk.
     """
+    print(f"🔍 Generating embeddings for {len(chunks)} chunks...")
     vector_embeddings = []
 
     # Use Bedrock Titan Embeddings.
     embeddings = BedrockEmbeddings(
-        model_id="amazon.titan-embed-text-v1",
+        model_id="amazon.titan-embed-text-v2:0",
         region_name="us-east-1"
     )
 
     # Process in batches for efficiency 
-    for i in range(0, len(chunks), 100):
-        batch = chunks[i:i+100]
+    for i in range(0, len(chunks), 96):
+        print(f"⏳ Processing batch {i//96 + 1} of {((len(chunks)-1)//96) + 1}...")
+        batch = chunks[i:i+96]
         vector_embeddings.extend([
             {"id": chunk.metadata.get("chunk_id"), "embedding": embedding, "metadata": chunk.metadata}
             for chunk, embedding in zip(
@@ -133,28 +146,42 @@ def upsert_to_pinecone(embeddings: list, namespace: str) -> None:
     - embeddings (list): List of dicts with 'id', 'embedding', and 'metadata' for each chunk.
     - namespace (str): Pinecone namespace to upsert into.
     """
+    print(f"🚀 Upserting {len(embeddings)} vectors into Pinecone namespace '{namespace}'...")
     # Initialize the Pinecone client using env vars.
     # PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     pinecone = Pinecone(
         api_key = os.getenv("PINECONE_API_KEY")
     )
 
-    index_name = "dlresearchflow-index"
+    index_name = os.getenv("PINECONE_INDEX_NAME")
     if not pinecone.has_index(index_name):
         pinecone.create_index(
             name = index_name,
-            dimension = 1536,
+            dimension = 1024,
             metric = "cosine",
             spec=ServerlessSpec(cloud="aws", region="us-east-1")
         )
     index = pinecone.Index(name=index_name)
 
     # Upsert vectors with rich metadata into the specified namespace.
+
+    for i in range(0, len(embeddings), 96):
+        print(f"⏳ Upserting batch {i//96 + 1} of {((len(embeddings)-1)//96) + 1}...")
+        batch = embeddings[i:i+96]
+        index.upsert(
+            vectors=[(str(item["id"]), item["embedding"], item["metadata"]) for item in batch],
+            namespace=namespace
+        )
+
+    '''
     vector_store = PineconeVectorStore(
         index=index,
         embedding=embeddings,
         namespace=namespace
     )
+
+    vector_store.add_vectors(embeddings)
+    '''
 
 
 def main() -> None:
