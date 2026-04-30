@@ -9,9 +9,20 @@ from agents.state import ResearchState
 from agents.retriever import retriever_node
 from agents.fact_checker import fact_checker_node
 from agents.analyst import analyst_node
+from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT
 
 from langgraph.graph import StateGraph, START, END
+from langchain_aws import ChatBedrock
+from langchain_core.messages import SystemMessage, HumanMessage
 import boto3
+from dotenv import load_dotenv
+import os
+import re
+
+load_dotenv()
+
+def remove_reasoning(text: str) -> str:
+    return re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL).strip()
 
 def planner_node(state: ResearchState) -> dict:
     """
@@ -22,7 +33,30 @@ def planner_node(state: ResearchState) -> dict:
     - Return a list of sub-tasks (Plan-and-Execute pattern).
     - Write to the scratchpad for observability.
     """
-    raise NotImplementedError
+    bedrock = boto3.client(
+        service_name='bedrock',
+        region_name= os.getenv("AWS_REGION")
+    )
+    agent = ChatBedrock(
+        model_id = os.getenv("BEDROCK_MODEL_ID"),
+        region_name = os.getenv("AWS_REGION"),
+        model_kwargs={
+            "temperature" : 0.1
+        }
+    )
+
+    message = []
+    question = state["question"]
+    message.append(SystemMessage(content=PLANNER_NODE_PROMPT))
+    message.append(HumanMessage(content=question))
+    response = agent.invoke(message).content
+    response = remove_reasoning(response)
+
+    state["scratchpad"].append(f"Question: {question}")
+    state["scratchpad"].append(f"Response: {response}")
+
+    state["plan"] = response
+    return state
 
 def router(state: ResearchState) -> str:
     """
@@ -32,7 +66,26 @@ def router(state: ResearchState) -> str:
     - Inspect the current plan and state to choose the next node.
     - Return the node name as a string (used by add_conditional_edges).
     """
-    raise NotImplementedError
+    bedrock = boto3.client(
+        service_name='bedrock',
+        region_name= os.getenv("AWS_REGION")
+    )
+    agent = ChatBedrock(
+        model_id = os.getenv("BEDROCK_MODEL_ID"),
+        region_name = os.getenv("AWS_REGION"),
+        model_kwargs={
+            "temperature" : 0.1
+        }
+    )
+    message = []
+    message.append(SystemMessage(content=ROUTER_PROMPT))
+    message.append(HumanMessage(content=str(state)))
+    response = agent.invoke(message).content
+    response = remove_reasoning(response)
+
+    state["scratchpad"].append(f"Router: {response}")
+
+    return response
 
 
 def critique_node(state: ResearchState) -> dict:
@@ -89,3 +142,56 @@ def build_supervisor_graph():
     # compile and return graph
     graph = graph.compile()
     return graph
+
+# -----
+# TEMP-DELETE LATER
+# -----
+def verify_bedrock_access():
+    """Test that Bedrock is accessible with current credentials."""
+    # Create Bedrock client
+    bedrock = boto3.client(
+        service_name='bedrock',
+        region_name='us-east-1'  # Adjust to your region
+    )
+    
+    # List available foundation models
+    response = bedrock.list_foundation_models()
+    
+    print("Available Bedrock Models:")
+    print("-" * 50)
+    for model in response['modelSummaries']:
+        print(f"  {model['modelId']}")
+        print(f"    Provider: {model['providerName']}")
+        print(f"    Input: {model['inputModalities']}")
+        print(f"    Output: {model['outputModalities']}")
+        print()
+
+# -----
+# TEMP- DELETE LATER
+# -----
+def test_graph():
+    graph = StateGraph(ResearchState)
+    graph.add_node("planner_node", planner_node)
+    graph.add_node("router", router)
+    graph.add_edge(START, "planner_node")
+    graph.add_edge("planner_node", "router")
+    graph.add_edge("router", END)
+    graph = graph.compile()
+
+    state = ResearchState(
+        question="What is the capital of France?",
+        plan=[],
+        retrieved_chunks=[],
+        analysis={},
+        fact_check_report={},
+        confidence_score=0.0,
+        iteration_count=0,
+        scratchpad=[],
+        user_id="1",
+    )
+
+    return graph, state
+if __name__ == "__main__":
+    graph, state = test_graph()
+    invoked = graph.invoke(state)
+    print(invoked["scratchpad"])
