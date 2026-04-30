@@ -9,7 +9,7 @@ from agents.state import ResearchState
 from agents.retriever import retriever_node
 from agents.fact_checker import fact_checker_node
 from agents.analyst import analyst_node
-from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT
+from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT, ROUTER_PROMPT_TEMP
 
 from langgraph.graph import StateGraph, START, END
 from langchain_aws import ChatBedrock
@@ -18,6 +18,9 @@ import boto3
 from dotenv import load_dotenv
 import os
 import re
+
+HITL_THRESHOLD = 0.8
+MAX_ITERATIONS = 3
 
 load_dotenv()
 
@@ -78,7 +81,7 @@ def router(state: ResearchState) -> str:
         }
     )
     message = []
-    message.append(SystemMessage(content=ROUTER_PROMPT))
+    message.append(SystemMessage(content=ROUTER_PROMPT_TEMP))
     message.append(HumanMessage(content=str(state)))
     response = agent.invoke(message).content
     response = remove_reasoning(response)
@@ -99,8 +102,19 @@ def critique_node(state: ResearchState) -> dict:
     - If above threshold, accept and route to END.
     - Increment iteration_count.
     """
-    raise NotImplementedError
+    confidence = state["confidence_score"]
+    iterations = state["iteration_count"]
+    critique_result = ""
+    
+    if confidence < HITL_THRESHOLD and iterations < MAX_ITERATIONS:
+        critique_result = "retry"
+    elif confidence < HITL_THRESHOLD and iterations >= MAX_ITERATIONS:
+        critique_result = "escalate to human intervention"
+    else:
+        critique_result = "accept current response"
 
+    state["iteration_count"] += 1
+    state["scratchpad"].append(f"Critique: {critique_result}")
 
 def build_supervisor_graph():
     """
@@ -172,10 +186,10 @@ def verify_bedrock_access():
 def test_graph():
     graph = StateGraph(ResearchState)
     graph.add_node("planner_node", planner_node)
-    graph.add_node("router", router)
+    graph.add_node("critique_node", critique_node)
     graph.add_edge(START, "planner_node")
-    graph.add_edge("planner_node", "router")
-    graph.add_edge("router", END)
+    graph.add_conditional_edges("planner_node", router)
+    graph.add_edge("critique_node", END)
     graph = graph.compile()
 
     state = ResearchState(
@@ -184,7 +198,7 @@ def test_graph():
         retrieved_chunks=[],
         analysis={},
         fact_check_report={},
-        confidence_score=0.0,
+        confidence_score=.90,
         iteration_count=0,
         scratchpad=[],
         user_id="1",

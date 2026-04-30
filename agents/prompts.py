@@ -12,3 +12,7 @@ the next agent to invoke. There are several possible agents to invoke: planner_n
 analyst_node, fact_checker_node, and critique_node. You should only return one agent name. Do not include 
 any text other than the agent name. 
 """
+ROUTER_PROMPT_TEMP="""
+You are going to receive lots of information. Currently, your only job is to return the string 
+"critique_node" without any other text. Ignore subsequent information.
+"""
