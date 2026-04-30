@@ -36,10 +36,6 @@ def planner_node(state: ResearchState) -> dict:
     - Return a list of sub-tasks (Plan-and-Execute pattern).
     - Write to the scratchpad for observability.
     """
-    bedrock = boto3.client(
-        service_name='bedrock',
-        region_name= os.getenv("AWS_REGION")
-    )
     agent = ChatBedrock(
         model_id = os.getenv("BEDROCK_MODEL_ID"),
         region_name = os.getenv("AWS_REGION"),
@@ -69,10 +65,6 @@ def router(state: ResearchState) -> str:
     - Inspect the current plan and state to choose the next node.
     - Return the node name as a string (used by add_conditional_edges).
     """
-    bedrock = boto3.client(
-        service_name='bedrock',
-        region_name= os.getenv("AWS_REGION")
-    )
     agent = ChatBedrock(
         model_id = os.getenv("BEDROCK_MODEL_ID"),
         region_name = os.getenv("AWS_REGION"),
@@ -81,12 +73,10 @@ def router(state: ResearchState) -> str:
         }
     )
     message = []
-    message.append(SystemMessage(content=ROUTER_PROMPT_TEMP))
+    message.append(SystemMessage(content=ROUTER_PROMPT))
     message.append(HumanMessage(content=str(state)))
     response = agent.invoke(message).content
     response = remove_reasoning(response)
-
-    state["scratchpad"].append(f"Router: {response}")
 
     return response
 
@@ -141,18 +131,15 @@ def build_supervisor_graph():
     graph.add_node("critique_node", critique_node)
 
     # static edges
-    graph.add_edge("retriever_node", "analyst_node")
-    graph.add_edge("analyst_node", "fact_checker_node")
-    graph.add_edge("fact_checker_node", "critique_node")
+    graph.add_edge(START, "planner_node")
 
     # conditional edges
     graph.add_conditional_edges("planner_node", router)
+    graph.add_conditional_edges("retriever_node", router)
+    graph.add_conditional_edges("analyst_node", router)
+    graph.add_conditional_edges("fact_checker_node", router)
     graph.add_conditional_edges("critique_node", router)
-
-    # set entry point
-    graph.add_edge(START, "planner_node")
     
-
     # compile and return graph
     graph = graph.compile()
     return graph
@@ -189,7 +176,6 @@ def test_graph():
     graph.add_node("critique_node", critique_node)
     graph.add_edge(START, "planner_node")
     graph.add_conditional_edges("planner_node", router)
-    graph.add_edge("critique_node", END)
     graph = graph.compile()
 
     state = ResearchState(
