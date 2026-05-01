@@ -8,12 +8,13 @@ response using AWS Bedrock, with Pydantic-validated output.
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+import json
 from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import ResearchState
 from agents.prompts import ANALYST_NODE_PROMPT
-from agents.supervisor import remove_reasoning
+from utils.utils import remove_reasoning
 
 load_dotenv()
 
@@ -68,14 +69,33 @@ def analyst_node(state: ResearchState) -> dict:
     message.append(HumanMessage(content=str(state)))
     response = agent.invoke(message).content
     response = remove_reasoning(response)
-    response = AnalysisResult(**response)
+    
+    data = json.loads(response)
+    result = AnalysisResult.model_validate(data)
 
-    state["analysis"] = response
-    state["confidence_score"] = response.confidence
-    state["scratchpad"].append(f"Analysis: {response}") 
+    state["analysis"] = result.model_dump()
+    state["confidence_score"] = result.confidence
+    state["scratchpad"].append(f"Analysis: {result.model_dump()}") 
 
     return state
 
 # -----
 # TEMP- DELETE LATER
 # -----
+if __name__ == "__main__":
+    state = ResearchState(
+        question="What is the capital of France?",
+        plan=["Search for the capital of France", "Verify the information is up to date"],
+        retrieved_chunks=["Paris is the capital of France."],
+        analysis={},
+        fact_check_report={},
+        confidence_score=0,
+        iteration_count=0,
+        scratchpad=["Question: What is the capital of France?", "Plan: Search for the capital of France, \
+                    Verify the information is up to date", "Retrieved Chunks: Paris is the capital of France."],
+        user_id="1",
+    )
+
+    response = analyst_node(state)
+    for key, value in response.items():
+        print(f"{key}: {value}")
