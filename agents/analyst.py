@@ -6,9 +6,16 @@ response using AWS Bedrock, with Pydantic-validated output.
 """
 
 from pydantic import BaseModel
+from dotenv import load_dotenv
+import os
+from langchain_aws import ChatBedrock
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import ResearchState
+from agents.prompts import ANALYST_NODE_PROMPT
+from agents.supervisor import remove_reasoning
 
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Structured Output Schema
@@ -44,7 +51,31 @@ def analyst_node(state: ResearchState) -> dict:
     - Log actions to the scratchpad.
 
     Returns:
-        Dict with "analysis" key containing the AnalysisResult as a dict,
-        and "confidence_score" updated from the model's self-assessment.
+        Updated state with "analysis" and "confidence_score" keys.
+            - "analysis": Dict with "analysis" key containing the AnalysisResult as a dict,
+            - "confidence_score": updated from the model's self-assessment, 0.0-1.0.
     """
-    raise NotImplementedError
+    agent = ChatBedrock(
+        model_id=os.getenv("BEDROCK_MODEL_ID"),
+        region_name=os.getenv("AWS_REGION"),
+        model_kwargs={
+            "temperature": 0.1
+        }
+    )
+
+    message = []
+    message.append(SystemMessage(content=ANALYST_NODE_PROMPT))
+    message.append(HumanMessage(content=str(state)))
+    response = agent.invoke(message).content
+    response = remove_reasoning(response)
+    response = AnalysisResult(**response)
+
+    state["analysis"] = response
+    state["confidence_score"] = response.confidence
+    state["scratchpad"].append(f"Analysis: {response}") 
+
+    return state
+
+# -----
+# TEMP- DELETE LATER
+# -----
