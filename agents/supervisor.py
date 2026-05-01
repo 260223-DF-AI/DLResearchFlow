@@ -10,6 +10,7 @@ from agents.retriever import retriever_node
 from agents.fact_checker import fact_checker_node
 from agents.analyst import analyst_node
 from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT, ROUTER_PROMPT_TEMP
+from utils.utils import remove_reasoning
 
 from langgraph.graph import StateGraph, START, END
 from langchain_aws import ChatBedrock
@@ -23,9 +24,6 @@ HITL_THRESHOLD = 0.8
 MAX_ITERATIONS = 3
 
 load_dotenv()
-
-def remove_reasoning(text: str) -> str:
-    return re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL).strip()
 
 def planner_node(state: ResearchState) -> dict:
     """
@@ -52,7 +50,7 @@ def planner_node(state: ResearchState) -> dict:
     response = remove_reasoning(response)
 
     state["scratchpad"].append(f"Question: {question}")
-    state["scratchpad"].append(f"Response: {response}")
+    state["scratchpad"].append(f"Plan: {response}")
 
     state["plan"] = response
     return state

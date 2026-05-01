@@ -6,9 +6,17 @@ response using AWS Bedrock, with Pydantic-validated output.
 """
 
 from pydantic import BaseModel
+from dotenv import load_dotenv
+import os
+import json
+from langchain_aws import ChatBedrock
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import ResearchState
+from agents.prompts import ANALYST_NODE_PROMPT
+from utils.utils import remove_reasoning
 
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Structured Output Schema
@@ -44,7 +52,50 @@ def analyst_node(state: ResearchState) -> dict:
     - Log actions to the scratchpad.
 
     Returns:
-        Dict with "analysis" key containing the AnalysisResult as a dict,
-        and "confidence_score" updated from the model's self-assessment.
+        Updated state with "analysis" and "confidence_score" keys.
+            - "analysis": Dict with "analysis" key containing the AnalysisResult as a dict,
+            - "confidence_score": updated from the model's self-assessment, 0.0-1.0.
     """
-    raise NotImplementedError
+    agent = ChatBedrock(
+        model_id=os.getenv("BEDROCK_MODEL_ID"),
+        region_name=os.getenv("AWS_REGION"),
+        model_kwargs={
+            "temperature": 0.1
+        }
+    )
+
+    message = []
+    message.append(SystemMessage(content=ANALYST_NODE_PROMPT))
+    message.append(HumanMessage(content=str(state)))
+    response = agent.invoke(message).content
+    response = remove_reasoning(response)
+    
+    data = json.loads(response)
+    result = AnalysisResult.model_validate(data)
+
+    state["analysis"] = result.model_dump()
+    state["confidence_score"] = result.confidence
+    state["scratchpad"].append(f"Analysis: {result.model_dump()}") 
+
+    return state
+
+# -----
+# TEMP- DELETE LATER
+# -----
+if __name__ == "__main__":
+    state = ResearchState(
+        question="What is the capital of France?",
+        plan=["Search for the capital of France", "Verify the information is up to date"],
+        retrieved_chunks=["Paris is the capital of France."],
+        analysis={},
+        fact_check_report={},
+        confidence_score=0,
+        iteration_count=0,
+        scratchpad=["Question: What is the capital of France?", "Plan: Search for the capital of France, \
+                    Verify the information is up to date", "Retrieved Chunks: Paris is the capital of France."],
+        user_id="1",
+    )
+
+    response = analyst_node(state)
+    for key, value in response.items():
+        print(f"{key}: {value}")
