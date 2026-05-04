@@ -83,26 +83,28 @@ def _compress(chunk_text: str, query: str, max_sentences: int = 4) -> str:
 
 def _rerank_matches(query: str, matches: list[dict], top_k: int = 5) -> list[dict]:
     """Rerank Pinecone matches using Bedrock Cohere rerank."""
+    return []
     if not matches:
         return []
 
-    documents = []
-    for match in matches:
-        meta = match.get("metadata", {}) if isinstance(match, dict) else {}
-        documents.append({"text": meta.get("content", "")})
+    documents = [
+        match.get("metadata", {}).get("content", "")
+        if isinstance(match, dict) else ""
+        for match in matches
+    ]
 
     body = {
+        "api_version": 2,
         "query": query,
         "documents": documents,
-        "top_n": min(top_k, len(documents)),
-        "return_documents": False,
+        "top_n": min(top_k, len(documents))
     }
 
     response = _get_bedrock_runtime().invoke_model(
         modelId="cohere.rerank-v3-5:0",
         body=json.dumps(body),
-        accept="application/json",
-        contentType="application/json",
+        # accept="application/json",
+        # contentType="application/json",
     )
     payload = json.loads(response["body"].read())
     results = payload.get("results", []) if isinstance(payload, dict) else []
