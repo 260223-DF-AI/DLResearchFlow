@@ -5,32 +5,33 @@ Defines the TypedDict that flows through the Supervisor StateGraph.
 All nodes read from and write to this shared state.
 """
 
-from typing import TypedDict
+from typing import Annotated, TypedDict
+from operator import add
 
 
-class ResearchState(TypedDict):
+class ResearchState(TypedDict, total=False):
+    """Shared state for the Supervisor graph.
+
+    `total=False` lets nodes return partial dicts without LangGraph
+    complaining about missing keys.
     """
-    Shared state for the Supervisor graph.
-
-    TODO: Expand these fields as your design evolves.
-
-    Attributes:
-        question: The original user research question.
-        plan: Decomposed sub-tasks from the Planner node.
-        retrieved_chunks: Chunks returned by the Retriever agent.
-        analysis: Synthesized response from the Analyst agent.
-        fact_check_report: Verification report from the Fact-Checker agent.
-        confidence_score: Overall confidence in the final answer (0.0–1.0).
-        iteration_count: Number of self-refinement loops executed so far.
-        scratchpad: Step-wise log of intermediate outputs for observability.
-        user_id: Identifier for cross-thread memory via the Store interface.
-    """
+    # --- inputs ---
     question: str
+    user_id: str
+
+    # --- planner output ---
     plan: list[str]
+    current_subtask_index: int
+
+    # --- retrieval / analysis / verification ---
     retrieved_chunks: list[dict]
-    analysis: dict
-    fact_check_report: dict
+    analysis: dict                  # serialized AnalysisResult
+    fact_check_report: dict         # serialized FactCheckReport
+
+    # --- loop control ---
     confidence_score: float
     iteration_count: int
-    scratchpad: list[str]
-    user_id: str
+    needs_hitl: bool                # True → critique routes to HITL interrupt
+
+    # --- observability — uses the `add` reducer so each node APPENDS ---
+    scratchpad: Annotated[list[str], add]
