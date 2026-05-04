@@ -14,7 +14,12 @@ from agents.state import ResearchState
 from pinecone import Pinecone, ServerlessSpec
 
 from langchain_aws import BedrockEmbeddings
+from langchain_cohere import CohereRerank
 from langchain_pinecone import PineconeVectorStore
+# from langchain_text_splitters.retrievers import ContextualCompressionRetriever # moved to langchain_classic
+from deepagents import create_deep_agent
+from deepagents.backends import StateBackend
+from deepagents.middleware.summarization import create_summarization_tool_middleware
 
 load_dotenv()
 
@@ -43,7 +48,7 @@ def retriever_node(state: ResearchState) -> dict:
 
     embeddings = BedrockEmbeddings(
         model_id="amazon.titan-embed-text-v2:0",
-        region_name="us-east-1"
+        region_name=os.getenv("AWS_REGION")
     )
 
     index_name = os.getenv("PINECONE_INDEX_NAME")
@@ -52,7 +57,7 @@ def retriever_node(state: ResearchState) -> dict:
             name = index_name,
             dimension = 1024,
             metric = "cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            spec=ServerlessSpec(cloud="aws", region=os.getenv("PINECONE_REGION"))
         )
     index = pinecone.Index(name=index_name)
 
@@ -63,17 +68,62 @@ def retriever_node(state: ResearchState) -> dict:
         namespace="primary-corpus"
     )
 
+    # Use Named Entity Recognition (NER) to extract key entities from the sub-task for more focused retrieval.
+    # ner = spacy.load("en_core_web_sm")
+    # entities = ner(subtask).ents
+    # entity_names = [ent.text for ent in entities]
+
+
     results = vector_store.similarity_search(
         query=subtask,
         k=5, #TODO: Tune k based on retrieval quality and token budget.
         filter={} #TODO: Add metadata filters to narrow down results based on sub-task context.
     )
 
-    # Apply context compression to reduce token noise.
-    
+    # Contextual compression to reduce the number of retrieved chunks.
+    backend = StateBackend()
+    model = "anthropic.claude-3-sonnet-20240229-v1:0"
+    agent = create_deep_agent(
+        model=model,
+        middleware=[
+            create_summarization_tool_middleware(model, backend)
+        ]
+    )
+    # Use the agent to compress the context.
+    compressed_context = agent.run(retrieved_chunks)
 
     # Apply re-ranking to prioritize the most relevant results.
-    
+    reranker = CohereRerank(
+        model="rerank-english-v3.0",
+        cohere_api_key=os.getenv("COHERE_API_KEY")
+    )
+    reranked_results = reranker.rerank(
+        query=subtask,
+        documents=compressed_context
+    )
+
+    # Process the reranked results.
+    for result in reranked_results:
+        retrieved_chunks.append({
+            "content": result.document.get("text", ""),
+            "relevance_score": result.relevance_score,
+            "source": result.document.get("source", "Unknown"),
+            "page_number": result.document.get("page", 0)
+        })
+
+
+    # for result in results:
+    #     retrieved_chunks.append({
+    #         "content": result.page_content,
+    #         "relevance_score": result.metadata.get("relevance_score", 0),
+    #         "source": result.metadata.get("source", "Unknown"),
+    #         "page_number": result.metadata.get("page", 0)
+    #     })
+
+
+
+    # Sort by most relevant.
+    retrieved_chunks.sort(key=lambda x: x["relevance_score"], reverse=True)
 
     # Return updated state with retrieved_chunks populated.
     state["retrieved_chunks"] = retrieved_chunks
@@ -82,4 +132,4 @@ def retriever_node(state: ResearchState) -> dict:
     state["scratchpad"].append(f"Retrieved chunks for subtask '{subtask}': {len(retrieved_chunks)}")
 
 
-    return retrieved_chunks
+    return state
