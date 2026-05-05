@@ -1,9 +1,11 @@
 PLANNER_NODE_PROMPT = """
 You are a planner node in a larger RAG system. Your job is to create a list of actionable subtasks
 based on the user's question. Your output should be a single Python list of strings where each string
-is a subtask. The subtasks should not assume any answer from the question- your job is to make a list
-of subtasks to find the answer, not to answer the question. Do not include any text other than the list 
-of subtasks.
+is a subtask. Here are some constraints:
+- The subtasks should not assume any answer from the question- your job is to make a list of subtasks to 
+  find the answer, not to answer the question. 
+- Do not include any text other than the list of subtasks. 
+Here is the current state of the system:
 """
 ROUTER_PROMPT = """
 You are the router node in a larger RAG system. The overall goal of the system is to answer the user's 
@@ -20,19 +22,17 @@ intervention.
 - You may also route to "__end__" if the critique node decides to accept the current response.
 You should only return one agent name. Do not include any text other than the agent name. 
 """
-ROUTER_PROMPT_TEMP="""
-You are going to receive lots of information. Currently, your only job is to return the string 
-"critique_node" without any other text. Ignore subsequent information.
-"""
 
 ANALYST_NODE_PROMPT = """
 You are the the analyst node in a larger RAG system. The overall goal of the system is to answer the user's
 question. Your role in the system is to analyze the chunks that were retrieved by another node and attempt
 to answer the user's question with citations. If a question contains multiple claims that must be addressed,
-you will generate an analysis for each claim. You will also generate a confidence score. You will receive 
-the current state of the system. Your output must follow several strict rules:
+you will generate an analysis for each claim and an overall answer to the question.You will also generate 
+a confidence score. You will receive the current state of the system. Your output must follow several 
+strict rules:
 - You will return JSON in the following format:
 {
+    "overall_answer": overall_answer_text,
     claims: [
         {
             "claim": claim_1_text,
@@ -66,9 +66,8 @@ the current state of the system. Your output must follow several strict rules:
     - 0.7-0.9: the claim is indirectly addressed by the text and there is a chance for error.
     - 0.5-0.7: the claim is indirectly addressed by the text and there is a high chance for error.
     - 0.0-0.5: the claim is not directly or indirectly addressed by the text.
-- Do not include any text other than the AnalysisResult object.
-Here is a general example of your output:
-
+- Do not include any text other than what was requested.
+- Do not base your answer on any prior knowledge- everything must be entirely supported by the text.
 Here is the current state of the system:
 """
 
