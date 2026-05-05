@@ -28,12 +28,19 @@ class Citation(BaseModel):
     page_number: int | None = None
     excerpt: str
 
+class SingleClaim(BaseModel):
+    """A single claim."""
+    claim: str
+    answer: str
+    citations: list[Citation]
+    confidence: float
+
 
 class AnalysisResult(BaseModel):
     """Pydantic model enforcing structured analyst output."""
-    answer: str
-    citations: list[Citation]
-    confidence: float  # 0.0 – 1.0
+    overall_answer: str
+    claims: list[SingleClaim]
+    overall_confidence: float  # 0.0 – 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -64,18 +71,34 @@ def analyst_node(state: ResearchState) -> dict:
         }
     )
 
+    # give the model prompt & system state
     message = []
     message.append(SystemMessage(content=ANALYST_NODE_PROMPT))
     message.append(HumanMessage(content=str(state)))
     response = agent.invoke(message).content
+
+    # remove reasoning
     response = remove_reasoning(response)
     
+    # parse response
+    total_confidence = 0.0
+    claims = []
     data = json.loads(response)
-    result = AnalysisResult.model_validate(data)
 
-    state["analysis"] = result.model_dump()
-    state["confidence_score"] = result.confidence
-    state["scratchpad"].append(f"Analysis: {result.model_dump()}") 
+    for claim in data["claims"]:
+        total_confidence += claim["confidence"]
+        claims.append(SingleClaim.model_validate(claim))
+    
+    report = AnalysisResult(
+        overall_answer=data["overall_answer"],
+        claims=claims,
+        overall_confidence=total_confidence/len(claims)
+    )
+
+
+    state["analysis"] = report.model_dump()
+    state["confidence_score"] = report.overall_confidence
+    state["scratchpad"].append(f"Analysis: {state["analysis"]}") 
 
     return state
 
@@ -84,18 +107,16 @@ def analyst_node(state: ResearchState) -> dict:
 # -----
 if __name__ == "__main__":
     state = ResearchState(
-        question="What is the capital of France?",
-        plan=["Search for the capital of France", "Verify the information is up to date"],
-        retrieved_chunks=["Paris is the capital of France."],
+        question="Does the capital of France or the capital of Germany have more people?",
+        plan=["Search for the capital of France", "Search for the population of the capital of France", "Search for the capital of Germany", "Search for the population of the capital of Germany", "Verify the information is up to date"],
+        retrieved_chunks=["Paris is the capital of France.", "Paris has a population of 5 million people.", "Berlin is the capital of Germany.", "Berlin has a population of 3 million people."],
         analysis={},
         fact_check_report={},
         confidence_score=0,
         iteration_count=0,
-        scratchpad=["Question: What is the capital of France?", "Plan: Search for the capital of France, \
-                    Verify the information is up to date", "Retrieved Chunks: Paris is the capital of France."],
+        scratchpad=["Question: Does the capital of France or the capital of Germany have more people?", "Plan: 'Search for the capital of France', 'Search for the population of the capital of France', 'Search for the capital of Germany', 'Search for the population of the capital of Germany', 'Verify the information is up to date'", "Retrieved Chunks: 'Paris is the capital of France.', 'Paris has a population of 5 million people.', 'Berlin is the capital of Germany.', 'Berlin has a population of 3 million people.'"],
         user_id="1",
     )
 
     response = analyst_node(state)
-    for key, value in response.items():
-        print(f"{key}: {value}")
+    print(response["analysis"])
