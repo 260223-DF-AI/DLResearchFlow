@@ -73,6 +73,8 @@ def analyst_node(state: ResearchState) -> dict:
     data = json.loads(response)
     result = AnalysisResult.model_validate(data)
 
+    # TODO: parse result correctly- format recently changed to accomodate multiple claims per question
+
     state["analysis"] = result.model_dump()
     state["confidence_score"] = result.confidence
     state["scratchpad"].append(f"Analysis: {result.model_dump()}") 
