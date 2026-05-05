@@ -66,6 +66,9 @@ strict rules:
     - 0.7-0.9: the claim is indirectly addressed by the text and there is a chance for error.
     - 0.5-0.7: the claim is indirectly addressed by the text and there is a high chance for error.
     - 0.0-0.5: the claim is not directly or indirectly addressed by the text.
+- If multiple subclaims are found, the overall answer should be equivalent to the output to the user based
+  on their original question. They should be filled in on any intermediate information necessary for a full
+  understanding of the answer.
 - Do not include any text other than what was requested.
 - Do not base your answer on any prior knowledge- everything must be entirely supported by the text.
 Here is the current state of the system:
