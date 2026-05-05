@@ -6,12 +6,15 @@ response using AWS Bedrock, with Pydantic-validated output.
 """
 
 import os
+from dotenv import load_dotenv
 
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from agents.state import ResearchState
+
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------
