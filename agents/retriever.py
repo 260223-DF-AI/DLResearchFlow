@@ -8,12 +8,16 @@ structured retrieval results to the Supervisor.
 
 import os
 import json
+from dotenv import load_dotenv
 
 import boto3
 from langchain_aws import BedrockEmbeddings
 from pinecone import Pinecone
+import cohere
 
 from agents.state import ResearchState
+
+load_dotenv()
 
 # Module-level singletons, lazily constructed on first use. Lazy init matters:
 # both clients read env vars at construction time, so eager init at import time
@@ -83,37 +87,39 @@ def _compress(chunk_text: str, query: str, max_sentences: int = 4) -> str:
 
 def _rerank_matches(query: str, matches: list[dict], top_k: int = 5) -> list[dict]:
     """Rerank Pinecone matches using Bedrock Cohere rerank."""
-    return []
+    co = cohere.Client(api_key=os.environ["COHERE_API_KEY"])
     if not matches:
         return []
 
-    documents = [
-        match.get("metadata", {}).get("content", "")
-        if isinstance(match, dict) else ""
-        for match in matches
-    ]
+    documents = [match.get("metadata", {}).get("content", "") for match in matches]
 
-    body = {
-        "api_version": 2,
-        "query": query,
-        "documents": documents,
-        "top_n": min(top_k, len(documents))
-    }
-
-    response = _get_bedrock_runtime().invoke_model(
-        modelId="cohere.rerank-v3-5:0",
-        body=json.dumps(body),
-        # accept="application/json",
-        # contentType="application/json",
+    rankings = co.rerank(
+        model=os.environ["COHERE_RERANK_MODEL_ID"],
+        query=query,
+        documents=documents,
+        top_n=min(top_k, len(documents)),
     )
-    payload = json.loads(response["body"].read())
-    results = payload.get("results", []) if isinstance(payload, dict) else []
+
+    # rankings is expected to have a "results" list of objects with
+    # an "index" into "documents" and a "relevance_score".
+    results = rankings.results
+    if not results:
+        return matches[:top_k]
 
     reranked = []
-    for result in results:
-        idx = result.get("index")
-        if isinstance(idx, int) and 0 <= idx < len(matches):
-            reranked.append(matches[idx])
+    for r in results[:top_k]:
+        idx = r.index
+        score = r.relevance_score
+        if idx is None or idx < 0 or idx >= len(matches):
+            continue
+        m = matches[idx]
+        # attach the reranker score for later use
+        try:
+            m["rerank_score"] = float(score) if score is not None else None
+        except Exception:
+            m["rerank_score"] = None
+        reranked.append(m)
+
     return reranked or matches[:top_k]
 
 
@@ -163,10 +169,7 @@ def retriever_node(state: ResearchState) -> dict:
     return {"retrieved_chunks": chunks, "scratchpad": log}
 
 
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    
+if __name__ == "__main__":    
     state = {
         "question": "Replace this with something your corpus actually contains.",
         "plan": ["Replace this with something your corpus actually contains."],
