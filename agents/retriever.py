@@ -9,6 +9,9 @@ structured retrieval results to the Supervisor.
 import os
 from dotenv import load_dotenv
 
+import os
+from dotenv import load_dotenv
+
 from agents.state import ResearchState
 
 from pinecone import Pinecone, ServerlessSpec
@@ -28,6 +31,8 @@ def retriever_node(state: ResearchState) -> dict:
     """
     Retrieve relevant document chunks for the current sub-task.
 
+    Args:
+        state: ResearchState object containing the current plan and context.
     Args:
         state: ResearchState object containing the current plan and context.
 
