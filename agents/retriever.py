@@ -27,6 +27,58 @@ from deepagents.middleware.summarization import create_summarization_tool_middle
 load_dotenv()
 
 
+# Module-level singletons, lazily constructed on first use. Lazy init matters:
+# both clients read env vars at construction time, so eager init at import time
+# would force every caller (tests, scripts, Lambda cold start) to have AWS_REGION
+# and PINECONE_API_KEY set *before* `from agents.retriever import ...` runs.
+_embedder = None
+_pinecone_index = None
+
+
+def _get_embedder():
+    """Lazy-init so unit tests can monkeypatch before first call."""
+    global _embedder
+    if _embedder is None:
+        _embedder = BedrockEmbeddings(
+            model_id=os.environ["BEDROCK_EMBEDDING_MODEL_ID"],
+            region_name=os.environ["AWS_REGION"],
+        )
+    return _embedder
+
+def _get_index():
+    """Lazy-init so unit tests can monkeypatch before first call."""
+    global _pinecone_index
+    if _pinecone_index is None:
+        pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+        _pinecone_index = pc.Index(os.environ["PINECONE_INDEX_NAME"])
+    return _pinecone_index
+
+def _cos_sim(a: list[float], b: list[float]) -> float:
+    """Cosine similarity for plain Python lists — avoids a numpy import."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+def _compress(chunk_text: str, query: str, max_sentences: int = 4) -> str:
+    """Keep the sentences whose embedding is closest to the query.
+
+    Cheap, deterministic, and good enough to halve token usage on long
+    chunks. Replace with an LLM-based compressor if you need higher recall.
+
+    Worked well for our use-case in testing so keeping to avoid unnecessary LLM calls
+    """
+    sentences = [s.strip() for s in chunk_text.split(". ") if s.strip()]
+    if len(sentences) <= max_sentences:
+        return chunk_text
+    embedder = _get_embedder()
+    query_vec = embedder.embed_query(query)
+    sent_vecs = embedder.embed_documents(sentences)
+    scores = [_cos_sim(query_vec, sv) for sv in sent_vecs]
+    top = sorted(range(len(sentences)), key=lambda i: -scores[i])[:max_sentences]
+    top.sort()                                      # preserve original order
+    return ". ".join(sentences[i] for i in top)
+
 def retriever_node(state: ResearchState) -> dict:
     """
     Retrieve relevant document chunks for the current sub-task.
@@ -43,8 +95,11 @@ def retriever_node(state: ResearchState) -> dict:
     retrieved_chunks = []
 
     # Extract the current sub-task from state["plan"].
-    # TODO: Check if plan[-1] is the next or final sub-task, dependent on implementation in state.py/supervisor.py
-    subtask = state.plan[-1] if state.plan else "N/A"
+    print(state)
+    plan = state.get("plan", [])
+    print(plan)
+    idx = state.get("current_subtask_index", 0)
+    subtask = plan[idx] if plan else state["question"]
 
     # Query the Pinecone index with semantic search and metadata filters.
     pinecone = Pinecone(
@@ -52,7 +107,7 @@ def retriever_node(state: ResearchState) -> dict:
     )
 
     embeddings = BedrockEmbeddings(
-        model_id="amazon.titan-embed-text-v2:0",
+        model_id=os.getenv("BEDROCK_EMBEDDING_MODEL_ID"),
         region_name=os.getenv("AWS_REGION")
     )
 
@@ -138,3 +193,22 @@ def retriever_node(state: ResearchState) -> dict:
 
 
     return state
+
+if __name__ == "__main__":
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    from agents.retriever import retriever_node
+
+    state = {
+        "question": "Replace this with something your corpus actually contains.",
+        "plan": ["Replace this with something your corpus actually contains."],
+        "current_subtask_index": 0,
+    }
+    out = retriever_node(state)
+
+    print("Got", len(out["retrieved_chunks"]), "chunks")
+    for c in out["retrieved_chunks"]:
+        print(f"  [{c['relevance_score']:.3f}] {c['source']}#p{c['page_number']}: "
+              f"{c['content'][:80]}...")
