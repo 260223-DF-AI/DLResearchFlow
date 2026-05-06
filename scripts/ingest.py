@@ -119,7 +119,7 @@ def generate_embeddings(chunks: list) -> list:
     # Use Bedrock Titan Embeddings.
     embeddings = BedrockEmbeddings(
         model_id="amazon.titan-embed-text-v2:0",
-        region_name="us-east-1"
+        region_name=os.getenv("AWS_REGION")
     )
 
     # Process in batches for efficiency 
@@ -159,7 +159,7 @@ def upsert_to_pinecone(embeddings: list, namespace: str) -> None:
             name = index_name,
             dimension = 1024,
             metric = "cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            spec=ServerlessSpec(cloud="aws", region=os.getenv("PINECONE_REGION"))
         )
     index = pinecone.Index(name=index_name)
 
