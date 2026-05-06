@@ -25,4 +25,9 @@ def mask_pii(text: str) -> str:
     - Return the sanitized text.
     - Consider logging redaction counts to the scratchpad.
     """
-    raise NotImplementedError
+    if not text:
+        return text
+    redacted = text
+    for label, pattern in PII_PATTERNS.items():
+        redacted = re.sub(pattern, f"[REDACTED_{label.upper()}]", redacted)
+    return redacted
