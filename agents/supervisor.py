@@ -9,7 +9,7 @@ from agents.state import ResearchState
 from agents.retriever import retriever_node
 from agents.fact_checker import fact_checker_node
 from agents.analyst import analyst_node
-from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT, ROUTER_PROMPT_TEMP
+from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT
 from utils.utils import remove_reasoning
 
 from langgraph.graph import StateGraph, START, END
@@ -190,6 +190,23 @@ def test_graph():
 
     return graph, state
 if __name__ == "__main__":
-    graph, state = test_graph()
-    invoked = graph.invoke(state)
-    print(invoked["scratchpad"])
+    # graph, state = test_graph()
+    # invoked = graph.invoke(state)
+    # print(invoked["scratchpad"])
+    load_dotenv()
+
+    from agents.supervisor import build_supervisor_graph
+
+    graph = build_supervisor_graph()
+    config = {"configurable": {"thread_id": "demo-1"}}
+
+    result = graph.invoke(
+        {"question": "How is loss backpropagated through a feed-forward neural network?", "user_id": "ben"},
+        config=config,
+    )
+    print("FINAL ANSWER:")
+    print(result["analysis"]["answer"])
+    print("\nCONFIDENCE:", result["confidence_score"])
+    print("\nSCRATCHPAD:")
+    for line in result["scratchpad"]:
+        print(" ", line)

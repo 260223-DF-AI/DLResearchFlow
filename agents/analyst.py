@@ -98,7 +98,7 @@ def analyst_node(state: ResearchState) -> dict:
 
     state["analysis"] = report.model_dump()
     state["confidence_score"] = report.overall_confidence
-    state["scratchpad"].append(f"Analysis: {state["analysis"]}") 
+    state["scratchpad"].append(f"Analysis: {state['analysis']}")
 
     return state
 
