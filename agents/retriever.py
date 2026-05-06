@@ -44,6 +44,7 @@ def _get_index():
         _pinecone_index = pc.Index(os.environ["PINECONE_INDEX_NAME"])
     return _pinecone_index
 
+'''
 def _get_bedrock_runtime():
     """Lazy-init so unit tests can monkeypatch before first call."""
     global _bedrock_runtime
@@ -53,6 +54,7 @@ def _get_bedrock_runtime():
             region_name=os.environ["AWS_REGION"],
         )
     return _bedrock_runtime
+'''
 
 def _cos_sim(a: list[float], b: list[float]) -> float:
     """Cosine similarity for plain Python lists — avoids a numpy import."""
