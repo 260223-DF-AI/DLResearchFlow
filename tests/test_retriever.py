@@ -9,13 +9,22 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from agents.retriever import retriever_node
+
+def _fake_match(content, score, source="doc.pdf", page=1):
+    return {"id": f"id-{content[:5]}",
+            "score": score,
+            "metadata": {"content": content, "source": source, "page_number": page}}
 
 
 class TestRetrieverAgent:
     """Tests for agents.retriever.retriever_node."""
 
-    def test_returns_structured_chunks(self):
+    def _patched_index(self, matches):
+        index = MagicMock()
+        index.query.return_value = {"matches": matches}
+        return index
+
+    def test_returns_structured_chunks(self, monkeypatch):
         """
         TODO:
         - Mock the Pinecone client's query method.
@@ -23,102 +32,78 @@ class TestRetrieverAgent:
         - Assert the returned dict contains "retrieved_chunks".
         - Assert each chunk has: content, relevance_score, source, page_number.
         """
-        with patch('agents.retriever.pinecone') as mock_pinecone:
-            mock_pinecone.query.return_value = [
-                {
-                    'content': 'Sample content 1',
-                    'relevance_score': 0.9,
-                    'source': 'doc1.pdf',
-                    'page_number': 1
-                },
-                {
-                    'content': 'Sample content 2',
-                    'relevance_score': 0.8,
-                    'source': 'doc2.pdf',
-                    'page_number': 2
-                }
-            ]
-            # Call the retriever node
-            result = retriever_node({'query': 'sample query'})
+        from agents import retriever
+        monkeypatch.setattr(
+            retriever, "_get_index",
+            lambda: self._patched_index([
+                _fake_match("Apollo 11 landed on the Moon in 1969.", 0.91),
+                _fake_match("Apollo 13 had an oxygen tank failure.",     0.87),
+            ]),
+        )
+        out = retriever.retriever_node({
+            "question": "When did Apollo 11 land?",
+            "plan": ["When did Apollo 11 land?"],
+            "current_subtask_index": 0,
+        })
+        assert "retrieved_chunks" in out
+        assert len(out["retrieved_chunks"]) >= 1
+        for c in out["retrieved_chunks"]:
+            for k in ("content", "relevance_score", "source", "page_number"):
+                assert k in c
 
-            # Assert the structure of the result
-            assert 'retrieved_chunks' in result
-            assert len(result['retrieved_chunks']) == 2
-
-            # Assert each chunk has the required fields
-            for chunk in result['retrieved_chunks']:
-                assert 'content' in chunk
-                assert 'relevance_score' in chunk
-                assert 'source' in chunk
-                assert 'page_number' in chunk
-
-    def test_applies_reranking(self):
+    def test_applies_reranking(self, monkeypatch):
         """
         TODO:
         - Provide mock results in non-optimal order.
         - Assert that re-ranking reorders them by relevance.
         """
-        with patch('agents.retriever.pinecone') as mock_pinecone:
-            mock_pinecone.query.return_value = [
-                {
-                    'content': 'Sample content 2',
-                    'relevance_score': 0.8,
-                    'source': 'doc2.pdf',
-                    'page_number': 2
-                },
-                {
-                    'content': 'Sample content 1',
-                    'relevance_score': 0.9,
-                    'source': 'doc1.pdf',
-                    'page_number': 1
-                }
-            ]
-            # Call the retriever node
-            result = retriever_node({'query': 'sample query'})
+        from agents import retriever
+        # Pinecone returns the WRONG order; rerank should reshuffle.
+        monkeypatch.setattr(
+            retriever, "_get_index",
+            lambda: self._patched_index([
+                _fake_match("Completely unrelated text about gardening.", 0.99),
+                _fake_match("Apollo 11 landed on the Moon in July 1969.", 0.10),
+            ]),
+        )
+        out = retriever.retriever_node({
+            "question": "When did Apollo 11 land?",
+            "plan": ["When did Apollo 11 land?"],
+            "current_subtask_index": 0,
+        })
+        # Top-1 after rerank should be the actually-relevant chunk.
+        assert "Apollo" in out["retrieved_chunks"][0]["content"]
 
-            # Assert the structure of the result
-            assert 'retrieved_chunks' in result
-            assert len(result['retrieved_chunks']) == 2
-
-            # Assert that the chunks are ordered by relevance
-            assert result['retrieved_chunks'][0]['relevance_score'] >= result['retrieved_chunks'][1]['relevance_score']
-
-    def test_applies_context_compression(self):
+    def test_applies_context_compression(self, monkeypatch):
         """
         TODO:
         - Provide a verbose mock chunk.
         - Assert the output chunk content is shorter / compressed.
         """
-        with patch('agents.retriever.pinecone') as mock_pinecone:
-            mock_pinecone.query.return_value = [
-                {
-                    'content': 'This is a very long and verbose content that needs to be compressed for better readability and performance.',
-                    'relevance_score': 0.9,
-                    'source': 'doc1.pdf',
-                    'page_number': 1
-                }
-            ]
-            # Call the retriever node
-            result = retriever_node({'query': 'sample query'})
+        from agents import retriever
+        long = ". ".join([f"Sentence {i} about Apollo." for i in range(20)])
+        monkeypatch.setattr(
+            retriever, "_get_index",
+            lambda: self._patched_index([_fake_match(long, 0.9)]),
+        )
+        out = retriever.retriever_node({
+            "question": "Apollo summary",
+            "plan": ["Apollo summary"],
+            "current_subtask_index": 0,
+        })
+        assert len(out["retrieved_chunks"][0]["content"]) < len(long)
 
-            # Assert the structure of the result
-            assert 'retrieved_chunks' in result
-            assert len(result['retrieved_chunks']) == 1
-
-            # Assert that the content is compressed
-            assert len(result['retrieved_chunks'][0]['content']) < len('This is a very long and verbose content that needs to be compressed for better readability and performance.')
-
-    def test_handles_empty_results(self):
+    def test_handles_empty_results(self, monkeypatch):
         """
         TODO:
         - Mock Pinecone returning zero matches.
         - Assert the node handles it gracefully (empty list, no crash).
         """
-        with patch('agents.retriever.pinecone') as mock_pinecone:
-            mock_pinecone.query.return_value = []
-            # Call the retriever node
-            result = retriever_node({'query': 'sample query'})
-
-            # Assert the structure of the result
-            assert 'retrieved_chunks' in result
-            assert len(result['retrieved_chunks']) == 0
+        from agents import retriever
+        monkeypatch.setattr(retriever, "_get_index", lambda: self._patched_index([]))
+        out = retriever.retriever_node({
+            "question": "anything",
+            "plan": ["anything"],
+            "current_subtask_index": 0,
+        })
+        assert out["retrieved_chunks"] == []
