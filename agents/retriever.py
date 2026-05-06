@@ -9,20 +9,11 @@ structured retrieval results to the Supervisor.
 import os
 from dotenv import load_dotenv
 
-import os
-from dotenv import load_dotenv
+from pinecone import Pinecone
+from langchain_aws import BedrockEmbeddings
+import cohere
 
 from agents.state import ResearchState
-
-from pinecone import Pinecone, ServerlessSpec
-
-from langchain_aws import BedrockEmbeddings
-from langchain_cohere import CohereRerank
-from langchain_pinecone import PineconeVectorStore
-# from langchain_text_splitters.retrievers import ContextualCompressionRetriever # moved to langchain_classic
-from deepagents import create_deep_agent
-from deepagents.backends import StateBackend
-from deepagents.middleware.summarization import create_summarization_tool_middleware
 
 load_dotenv()
 
@@ -79,6 +70,44 @@ def _compress(chunk_text: str, query: str, max_sentences: int = 4) -> str:
     top.sort()                                      # preserve original order
     return ". ".join(sentences[i] for i in top)
 
+def _rerank_matches(query: str, matches: list[dict], top_k: int = 5) -> list[dict]:
+    """Rerank Pinecone matches using Bedrock Cohere rerank."""
+    co = cohere.Client(api_key=os.environ["COHERE_API_KEY"])
+    if not matches:
+        return []
+
+    documents = [match.get("metadata", {}).get("content", "") for match in matches]
+
+    rankings = co.rerank(
+        model=os.environ["COHERE_RERANK_MODEL_ID"],
+        query=query,
+        documents=documents,
+        top_n=min(top_k, len(documents)),
+    )
+
+    # rankings is expected to have a "results" list of objects with
+    # an "index" into "documents" and a "relevance_score".
+    results = rankings.results
+    if not results:
+        return matches[:top_k]
+
+    reranked = []
+    for r in results[:top_k]:
+        idx = r.index
+        score = r.relevance_score
+        if idx is None or idx < 0 or idx >= len(matches):
+            continue
+        m = matches[idx]
+        # attach the reranker score for later use
+        try:
+            m["rerank_score"] = float(score) if score is not None else None
+        except Exception:
+            m["rerank_score"] = None
+        reranked.append(m)
+
+    return reranked or matches[:top_k]
+
+
 def retriever_node(state: ResearchState) -> dict:
     """
     Retrieve relevant document chunks for the current sub-task.
@@ -95,104 +124,53 @@ def retriever_node(state: ResearchState) -> dict:
     retrieved_chunks = []
 
     # Extract the current sub-task from state["plan"].
-    print(state)
+    # print(state)
     plan = state.get("plan", [])
-    print(plan)
+    # print(plan)
     idx = state.get("current_subtask_index", 0)
-    subtask = plan[idx] if plan else state["question"]
+    sub_task = plan[idx] if plan else state["question"]
+    log = [f"[retriever] sub-task: {sub_task!r}"]
+
 
     # Query the Pinecone index with semantic search and metadata filters.
-    pinecone = Pinecone(
-        api_key = os.getenv("PINECONE_API_KEY")
+    index = _get_index()
+    query_vec = _get_embedder().embed_query(sub_task)
+
+    raw = index.query(
+        vector=query_vec,
+        top_k=10,
+        namespace="primary-corpus",
+        include_metadata=True,
     )
+    matches = raw.get("matches", []) if isinstance(raw, dict) else raw["matches"]
+    log.append(f"[retriever] pinecone returned {len(matches)} candidates")
 
-    embeddings = BedrockEmbeddings(
-        model_id=os.getenv("BEDROCK_EMBEDDING_MODEL_ID"),
-        region_name=os.getenv("AWS_REGION")
-    )
+    if not matches:
+        return {"retrieved_chunks": [], "scratchpad": log + ["[retriever] no matches"]}
 
-    index_name = os.getenv("PINECONE_INDEX_NAME")
-    if not pinecone.has_index(index_name):
-        pinecone.create_index(
-            name = index_name,
-            dimension = 1024,
-            metric = "cosine",
-            spec=ServerlessSpec(cloud="aws", region=os.getenv("PINECONE_REGION"))
-        )
-    index = pinecone.Index(name=index_name)
-
-    vector_store = PineconeVectorStore(
-        index=index,
-        embedding=embeddings,
-        # namespace=namespace
-        namespace="primary-corpus"
-    )
-
-    # Use Named Entity Recognition (NER) to extract key entities from the sub-task for more focused retrieval.
-    # ner = spacy.load("en_core_web_sm")
-    # entities = ner(subtask).ents
-    # entity_names = [ent.text for ent in entities]
-
-
-    results = vector_store.similarity_search(
-        query=subtask,
-        k=5, #TODO: Tune k based on retrieval quality and token budget.
-        filter={} #TODO: Add metadata filters to narrow down results based on sub-task context.
-    )
-
-    # Contextual compression to reduce the number of retrieved chunks.
-    backend = StateBackend()
-    model = "anthropic.claude-3-sonnet-20240229-v1:0"
-    agent = create_deep_agent(
-        model=model,
-        middleware=[
-            create_summarization_tool_middleware(model, backend)
-        ]
-    )
-    # Use the agent to compress the context.
-    compressed_context = agent.run(retrieved_chunks)
 
     # Apply re-ranking to prioritize the most relevant results.
-    reranker = CohereRerank(
-        model="rerank-english-v3.0",
-        cohere_api_key=os.getenv("COHERE_API_KEY")
-    )
-    reranked_results = reranker.rerank(
-        query=subtask,
-        documents=compressed_context
-    )
+    try:
+        matches = _rerank_matches(sub_task, matches, top_k=5)
+        log.append(f"[retriever] reranked to top {len(matches)} with Cohere")
+    except Exception as e:
+        log.append(f"[retriever] rerank skipped: {e!r}")
 
+
+    # Contextual compression to reduce the number of retrieved chunks.
     # Process the reranked results.
-    for result in reranked_results:
-        retrieved_chunks.append({
-            "content": result.document.get("text", ""),
-            "relevance_score": result.relevance_score,
-            "source": result.document.get("source", "Unknown"),
-            "page_number": result.document.get("page", 0)
+    chunks = []
+    for match in matches[:5]:
+        meta = match["metadata"]
+        chunks.append({
+            "content": _compress(meta["content"], sub_task),
+            "relevance_score": float(match.get("score", 0.0)),
+            "source": meta.get("source", "unknown"),
+            "page_number": meta.get("page_number"),
         })
+    log.append(f"[retriever] kept top {len(chunks)} by Pinecone score")
+    return {"retrieved_chunks": chunks, "scratchpad": log}
 
-
-    # for result in results:
-    #     retrieved_chunks.append({
-    #         "content": result.page_content,
-    #         "relevance_score": result.metadata.get("relevance_score", 0),
-    #         "source": result.metadata.get("source", "Unknown"),
-    #         "page_number": result.metadata.get("page", 0)
-    #     })
-
-
-
-    # Sort by most relevant.
-    retrieved_chunks.sort(key=lambda x: x["relevance_score"], reverse=True)
-
-    # Return updated state with retrieved_chunks populated.
-    state["retrieved_chunks"] = retrieved_chunks
-
-    # Log actions to the scratchpad.
-    state["scratchpad"].append(f"Retrieved chunks for subtask '{subtask}': {len(retrieved_chunks)}")
-
-
-    return state
 
 if __name__ == "__main__":
     import os
@@ -202,8 +180,8 @@ if __name__ == "__main__":
     from agents.retriever import retriever_node
 
     state = {
-        "question": "Replace this with something your corpus actually contains.",
-        "plan": ["Replace this with something your corpus actually contains."],
+        "question": "What are neural networks?",
+        "plan": ["Understand the basics of neural networks."],
         "current_subtask_index": 0,
     }
     out = retriever_node(state)
