@@ -9,12 +9,13 @@ import argparse
 import os
 import json
 import uuid
+import asyncio
 
 from dotenv import load_dotenv
 
 from langgraph.errors import GraphInterrupt
 
-from agents.supervisor import build_supervisor_graph
+from agents.supervisor import build_supervisor_graph, run_streaming
 from middleware.guardrails import detect_injection, sanitize_input
 from middleware.pii_masking import mask_pii
 
@@ -44,6 +45,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable step-wise scratchpad logging.",
     )
+    parser.add_argument(
+        "--stream",
+        "-S",
+        action="store_true",
+        help="Stream tokens in real-time instead of waiting for full response.",
+    )
+
     return parser.parse_args()
 
 
@@ -81,6 +89,9 @@ def main() -> None:
     }
 
     # --- 3) invoke, handling HITL interrupts --------------------------------
+    if args.stream:
+        asyncio.run(run_streaming(question, user_id=args.user_id))
+        return  # run_streaming handles its own output; skip the report block
     try:
         result = graph.invoke(initial_state, config=config)
     except GraphInterrupt as interrupt:

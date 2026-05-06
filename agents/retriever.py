@@ -105,7 +105,6 @@ def _rerank_matches(query: str, matches: list[dict], top_k: int = 5) -> list[dic
     results = rankings.results
     if not results:
         return matches[:top_k]
-
     reranked = []
     for r in results[:top_k]:
         idx = r.index
