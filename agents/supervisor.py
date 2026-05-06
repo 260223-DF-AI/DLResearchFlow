@@ -5,25 +5,36 @@ Builds and returns the main LangGraph StateGraph that orchestrates
 the Planner, Retriever, Analyst, Fact-Checker, and Critique nodes.
 """
 
+import os
+from dotenv import load_dotenv
+import re
+import ast
+
+import boto3
+
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_aws import ChatBedrock
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel, Field
+
 from agents.state import ResearchState
 from agents.retriever import retriever_node
 from agents.fact_checker import fact_checker_node
 from agents.analyst import analyst_node
 from agents.prompts import PLANNER_NODE_PROMPT, ROUTER_PROMPT
+from memory.store import (
+    get_user_preferences,
+    get_query_history,
+    append_query,
+)
 from utils.utils import remove_reasoning
 
-from langgraph.graph import StateGraph, START, END
-from langchain_aws import ChatBedrock
-from langchain_core.messages import SystemMessage, HumanMessage
-import boto3
-from dotenv import load_dotenv
-import os
-import re
+load_dotenv()
 
 HITL_THRESHOLD = 0.8
 MAX_ITERATIONS = 3
 
-load_dotenv()
 
 def planner_node(state: ResearchState) -> dict:
     """
@@ -38,21 +49,42 @@ def planner_node(state: ResearchState) -> dict:
         model_id = os.getenv("BEDROCK_MODEL_ID"),
         region_name = os.getenv("AWS_REGION"),
         model_kwargs={
+            "max_tokens": 512,
             "temperature" : 0.1
         }
     )
 
+    user_id = state["user_id"]
+    prefs = get_user_preferences(user_id)
+    history = get_query_history(user_id)
+    append_query(user_id, state["question"])
+
+
     message = []
     question = state["question"]
     message.append(SystemMessage(content=PLANNER_NODE_PROMPT))
+    message.append(SystemMessage(content=f"User Preferences: {prefs}"))
+    message.append(SystemMessage(content=f"Recent Query History: {history}"))
     message.append(HumanMessage(content=question))
     response = agent.invoke(message).content
     response = remove_reasoning(response)
+
+    try:
+        parsed_response = ast.literal_eval(response)
+        if isinstance(parsed_response, list) and all(isinstance(item, str) for item in parsed_response):
+            response = parsed_response
+        else:
+            response = [str(parsed_response)]
+    except (ValueError, SyntaxError):
+        response = [response]
+
+    
 
     state["scratchpad"].append(f"Question: {question}")
     state["scratchpad"].append(f"Plan: {response}")
 
     state["plan"] = response
+    
     return state
 
 def router(state: ResearchState) -> str:
@@ -102,7 +134,17 @@ def critique_node(state: ResearchState) -> dict:
         critique_result = "accept current response"
 
     state["iteration_count"] += 1
+    print(f"Iteration {state['iteration_count']}: Critique Result - {critique_result} (Confidence: {confidence:.2f})")
     state["scratchpad"].append(f"Critique: {critique_result}")
+    return state
+
+def _critique_router(state: ResearchState) -> str:
+    """Edge after critique_node — END if accepted, else loop."""
+    confidence = state.get("confidence_score", 0.0)
+    threshold = float(os.environ.get("HITL_CONFIDENCE_THRESHOLD", 0.6))
+    if confidence >= threshold and not state.get("needs_hitl"):
+        return END
+    return "retriever"
 
 def build_supervisor_graph():
     """
@@ -122,25 +164,35 @@ def build_supervisor_graph():
     graph = StateGraph(ResearchState)
 
     # add nodes
-    graph.add_node("planner_node", planner_node)
-    graph.add_node("retriever_node", retriever_node)
-    graph.add_node("analyst_node", analyst_node)
-    graph.add_node("fact_checker_node", fact_checker_node)
-    graph.add_node("critique_node", critique_node)
+    graph.add_node("planner", planner_node)
+    graph.add_node("retriever", retriever_node)
+    graph.add_node("analyst", analyst_node)
+    graph.add_node("fact_checker", fact_checker_node)
+    graph.add_node("critique", critique_node)
 
     # static edges
-    graph.add_edge(START, "planner_node")
+    graph.add_edge(START, "planner")
+    # After planner, the router picks whichever specialist is needed first
+    # (almost always the retriever). Listed below so LangGraph knows the
+    # full set of valid destinations.
+    graph.add_conditional_edges(
+        "planner", router,
+        {"retriever": "retriever", "analyst": "analyst",
+         "fact_checker": "fact_checker", "critique": "critique"},
+    )
+    # Linear within a sub-task: retriever → analyst → fact_checker → critique
+    graph.add_edge("retriever", "analyst")
+    graph.add_edge("analyst", "fact_checker")
+    graph.add_edge("fact_checker", "critique")
 
-    # conditional edges
-    graph.add_conditional_edges("planner_node", router)
-    graph.add_conditional_edges("retriever_node", router)
-    graph.add_conditional_edges("analyst_node", router)
-    graph.add_conditional_edges("fact_checker_node", router)
-    graph.add_conditional_edges("critique_node", router)
+    # Critique decides whether to loop or end.
+    graph.add_conditional_edges(
+        "critique", _critique_router,
+        {"retriever": "retriever", END: END},
+    )
     
     # compile and return graph
-    graph = graph.compile()
-    return graph
+    return graph.compile(checkpointer=MemorySaver())
 
 # -----
 # TEMP-DELETE LATER
@@ -169,12 +221,16 @@ def verify_bedrock_access():
 # TEMP- DELETE LATER
 # -----
 def test_graph():
+    '''
     graph = StateGraph(ResearchState)
     graph.add_node("planner_node", planner_node)
     graph.add_node("critique_node", critique_node)
     graph.add_edge(START, "planner_node")
     graph.add_conditional_edges("planner_node", router)
-    graph = graph.compile()
+    graph = graph.compile(checkpointer=MemorySaver())
+    '''
+    from agents.supervisor import build_supervisor_graph
+    graph = build_supervisor_graph()
 
     state = ResearchState(
         question="What is the capital of France?",
@@ -189,23 +245,19 @@ def test_graph():
     )
 
     return graph, state
+
 if __name__ == "__main__":
-    # graph, state = test_graph()
     # invoked = graph.invoke(state)
     # print(invoked["scratchpad"])
     load_dotenv()
 
-    from agents.supervisor import build_supervisor_graph
+    graph, state = test_graph()
 
-    graph = build_supervisor_graph()
     config = {"configurable": {"thread_id": "demo-1"}}
 
-    result = graph.invoke(
-        {"question": "How is loss backpropagated through a feed-forward neural network?", "user_id": "ben"},
-        config=config,
-    )
+    result = graph.invoke(state, config=config)
     print("FINAL ANSWER:")
-    print(result["analysis"]["answer"])
+    print(result["analysis"]["overall_answer"])
     print("\nCONFIDENCE:", result["confidence_score"])
     print("\nSCRATCHPAD:")
     for line in result["scratchpad"]:
