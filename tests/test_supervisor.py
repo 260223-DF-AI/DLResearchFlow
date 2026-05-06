@@ -93,3 +93,45 @@ class TestSupervisorRouting:
         from langgraph.graph import END
         assert _critique_router({**out, "confidence_score": 0.9,
                                   "needs_hitl": False}) == END
+
+    def test_critique_advances_to_next_subtask(self, monkeypatch):
+        monkeypatch.setenv("HITL_CONFIDENCE_THRESHOLD", "0.6")
+        monkeypatch.setenv("MAX_REFINEMENT_ITERATIONS", "3")
+        from agents.supervisor import critique_node, _critique_router
+
+        out = critique_node({
+            "plan": ["first", "second"],
+            "current_subtask_index": 0,
+            "confidence_score": 0.9,
+            "iteration_count": 0,
+            "needs_hitl": False,
+            "retrieved_chunks": [{"content": "x"}],
+            "analysis": {"answer": "ok"},
+            "fact_check_report": {"verdicts": []},
+        })
+
+        assert out["current_subtask_index"] == 1
+        assert out["iteration_count"] == 0
+        assert out["retrieved_chunks"] == []
+        assert out["analysis"] == {}
+        assert out["fact_check_report"] == {}
+        assert _critique_router({**out, "plan": ["first", "second"]}) == "retriever"
+
+    def test_critique_accepts_last_subtask_and_ends(self, monkeypatch):
+        monkeypatch.setenv("HITL_CONFIDENCE_THRESHOLD", "0.6")
+        monkeypatch.setenv("MAX_REFINEMENT_ITERATIONS", "3")
+        from agents.supervisor import critique_node, _critique_router
+        from langgraph.graph import END
+
+        out = critique_node({
+            "plan": ["only"],
+            "current_subtask_index": 0,
+            "confidence_score": 0.9,
+            "iteration_count": 0,
+            "needs_hitl": False,
+        })
+
+        assert out["iteration_count"] == 1
+        assert _critique_router({**out, "confidence_score": 0.9,
+                                 "needs_hitl": False, "plan": ["only"],
+                                 "current_subtask_index": 0}) == END

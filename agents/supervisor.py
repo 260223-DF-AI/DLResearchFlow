@@ -133,9 +133,29 @@ def critique_node(state: ResearchState) -> dict:
     log = [f"[critique] iter={iteration}, conf={confidence:.2f}, "
            f"threshold={threshold}, max_iter={max_iter}"]
 
+    plan = state.get("plan", [])
+    idx = state.get("current_subtask_index", 0)
+
     # Path 1: confident enough → accept.
     if confidence >= threshold and not state.get("needs_hitl"):
-        log.append("[critique] accepted")
+        # If there are more subtasks, advance the pointer and reset
+        # downstream artifacts so the graph executes the next subtask.
+        if idx + 1 < len(plan):
+            next_idx = idx + 1
+            log.append(f"[critique] accepted sub-task {idx + 1}/{len(plan)}")
+            log.append(f"[critique] advancing to sub-task {next_idx + 1}/{len(plan)}")
+            return {
+                "current_subtask_index": next_idx,
+                "iteration_count": 0,
+                "confidence_score": 0.0,
+                "needs_hitl": False,
+                "retrieved_chunks": [],
+                "analysis": {},
+                "fact_check_report": {},
+                "scratchpad": log,
+            }
+
+        log.append("[critique] accepted final sub-task; finishing")
         return {"iteration_count": iteration, "scratchpad": log}
 
     # Path 2: budget exhausted → escalate.
@@ -159,7 +179,7 @@ def critique_node(state: ResearchState) -> dict:
 
 
 def _critique_router(state: ResearchState) -> str:
-    """Edge after critique_node — END if accepted, else loop."""
+    """Edge after critique_node — END if accepted/final, else continue loop."""
     confidence = state.get("confidence_score", 0.0)
     threshold = float(os.environ.get("HITL_CONFIDENCE_THRESHOLD", 0.6))
     if confidence >= threshold and not state.get("needs_hitl"):

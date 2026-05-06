@@ -125,10 +125,11 @@ def _rerank_matches(query: str, matches: list[dict], top_k: int = 5) -> list[dic
 
 def retriever_node(state: ResearchState) -> dict:
     """Retrieve and compress."""
-    plan = state.get("plan", [])
-    idx = state.get("current_subtask_index", 0)
+    plan = state["plan"]
+    idx = state["current_subtask_index"]
     sub_task = plan[idx] if plan else state["question"]
     log = [f"[retriever] sub-task: {sub_task!r}"]
+    # print(log[-1])
 
     # 1) embed + Pinecone semantic search ------------------------------------
     index = _get_index()
