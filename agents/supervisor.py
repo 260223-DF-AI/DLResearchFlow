@@ -7,7 +7,7 @@ the Planner, Retriever, Analyst, Fact-Checker, and Critique nodes.
 
 from agents.state import ResearchState
 from agents.retriever import retriever_node
-from agents.analyst import analyst_node
+from agents.analyst import analyst_node, analyst_node_stream
 from agents.fact_checker import fact_checker_node
 from memory.store import (
     get_user_preferences,
@@ -234,68 +234,75 @@ def build_supervisor_graph():
     # (PostgresSaver / DynamoDBSaver) when deploying to Lambda.
     return graph.compile(checkpointer=MemorySaver())
 
-# -----
-# TEMP-DELETE LATER
-# -----
-def verify_bedrock_access():
-    """Test that Bedrock is accessible with current credentials."""
-    # Create Bedrock client
-    bedrock = boto3.client(
-        service_name='bedrock',
-        region_name='us-east-1'  # Adjust to your region
-    )
-    
-    # List available foundation models
-    response = bedrock.list_foundation_models()
-    
-    print("Available Bedrock Models:")
-    print("-" * 50)
-    for model in response['modelSummaries']:
-        print(f"  {model['modelId']}")
-        print(f"    Provider: {model['providerName']}")
-        print(f"    Input: {model['inputModalities']}")
-        print(f"    Output: {model['outputModalities']}")
-        print()
-
-# -----
-# TEMP- DELETE LATER
-# -----
-def test_graph():
-    graph = StateGraph(ResearchState)
-    graph.add_node("planner_node", planner_node)
-    graph.add_node("critique_node", critique_node)
-    graph.add_edge(START, "planner_node")
-    graph.add_conditional_edges("planner_node", router)
-    graph = graph.compile()
-
-    state = ResearchState(
-        question="What is the capital of France?",
-        plan=[],
-        retrieved_chunks=[],
-        analysis={},
-        fact_check_report={},
-        confidence_score=.90,
-        iteration_count=0,
-        scratchpad=[],
-        user_id="1",
-    )
-
-    return graph, state
-if __name__ == "__main__":
-    load_dotenv()
-
-    from agents.supervisor import build_supervisor_graph
-
+async def run_streaming(question: str, user_id: str = "default", thread_id: str = "stream-1"):
     graph = build_supervisor_graph()
-    config = {"configurable": {"thread_id": "demo-1"}}
+    config = {"configurable": {"thread_id": thread_id}}
 
-    result = graph.invoke(
-        {"question": "How is loss backpropagated through a feed-forward neural network?", "user_id": "ben"},
+    print("Streaming response:\n")
+    
+    final_analysis = {}
+    final_confidence = 0.0
+    final_iterations = 0
+    final_fact_report = {}
+
+    async for chunk in graph.astream(
+        {"question": question, "user_id": user_id},
         config=config,
-    )
-    print("FINAL ANSWER:")
-    print(result["analysis"]["answer"])
-    print("\nCONFIDENCE:", result["confidence_score"])
-    print("\nSCRATCHPAD:")
-    for line in result["scratchpad"]:
-        print(" ", line)
+        stream_mode="updates",
+    ):
+        for node_name, state_update in chunk.items():
+            if node_name == "planner":
+                plan = state_update.get("plan", [])
+                print(f"[planner] decomposed into {len(plan)} sub-tasks:")
+                for i, t in enumerate(plan, 1):
+                    print(f"  {i}. {t}")
+                print()
+
+            elif node_name == "retriever":
+                n = len(state_update.get("retrieved_chunks", []))
+                print(f"[retriever] fetched {n} chunks\n")
+
+            elif node_name == "analyst":
+                analysis = state_update.get("analysis", {})
+                if analysis:
+                    print(f"[analyst] confidence={state_update.get('confidence_score', 0):.2f}")
+                    print(f"  answer: {analysis.get('answer', '')}\n")
+                    final_analysis = analysis
+                    final_confidence = state_update.get("confidence_score", 0.0)
+
+            elif node_name == "fact_checker":
+                report = state_update.get("fact_check_report", {})
+                if report:
+                    for v in report.get("verdicts", []):
+                        print(f"[fact_checker] [{v['verdict']}] {v['claim'][:80]}")
+                    print()
+                    # ADDED: keep the most recent fact check report
+                    final_fact_report = report
+
+            elif node_name == "critique":
+                conf = state_update.get("confidence_score")
+                itr = state_update.get("iteration_count")
+                if conf is not None:
+                    print(f"[critique] confidence={conf:.2f}, iteration={itr}")
+                # ADDED: track final iteration count
+                if itr is not None:
+                    final_iterations = itr
+    print("\n[stream complete]")
+
+    # ADDED: final formatted report, mirrors main.py's output block
+    print("\n" + "=" * 60)
+    print("ANSWER")
+    print("=" * 60)
+    print(final_analysis.get("answer", "<no answer>"))
+    print("\nCITATIONS")
+    for c in final_analysis.get("citations", []):
+        page = f", p.{c['page_number']}" if c.get("page_number") else ""
+        print(f"  • {c['source']}{page}: {c.get('excerpt', '')[:120]}")
+    print(f"\nCONFIDENCE: {final_confidence:.2f}")
+    print(f"ITERATIONS: {final_iterations}")
+    if final_fact_report:
+        print("\nFACT-CHECK REPORT")
+        for v in final_fact_report.get("verdicts", []):
+            print(f"  [{v['verdict']}] {v['claim'][:80]}")
+
+

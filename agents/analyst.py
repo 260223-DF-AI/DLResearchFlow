@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from langchain_aws import ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+from langchain_core.messages import AIMessageChunk
+import asyncio
 
 from agents.state import ResearchState
 
@@ -131,6 +133,74 @@ def analyst_node(state: ResearchState) -> dict:
                f"citations={len(result.citations)}")
 
     return {
+        "analysis": result.model_dump(),
+        "confidence_score": float(result.confidence),
+        "scratchpad": log,
+    }
+
+async def analyst_node_stream(state: ResearchState):
+    """
+    Streaming variant of analyst_node.
+
+    Yields raw text chunks from Bedrock as they arrive, then yields a
+    final dict (same shape as analyst_node's return) once generation
+    is complete.
+
+    NOTE: with_structured_output() is incompatible with streaming, so
+    this version collects the streamed text and parses it manually at
+    the end. The scratchpad and return dict are identical to analyst_node.
+    """
+    chunks = state.get("retrieved_chunks", [])
+    log = [f"[analyst] synthesizing from {len(chunks)} chunks (streaming)"]
+
+    if not chunks:
+        empty = AnalysisResult(
+            answer="No relevant context was retrieved; cannot answer reliably.",
+            citations=[],
+            confidence=0.0,
+        )
+        yield {
+            "analysis": empty.model_dump(),
+            "confidence_score": 0.0,
+            "scratchpad": log + ["[analyst] short-circuit: no chunks"],
+        }
+        return
+
+    plan = state.get("plan", [])
+    idx = state.get("current_subtask_index", 0)
+    sub_task = plan[idx] if plan else state["question"]
+
+    llm = ChatBedrock(
+        model_id=os.environ["BEDROCK_MODEL_ID"],
+        region_name=os.environ["AWS_REGION"],
+        model_kwargs={"max_tokens": 1024, "temperature": 0.2},
+        streaming=True,  # CHANGED: enable streaming on the LLM
+    )
+    # NOTE: No .with_structured_output() here — incompatible with streaming.
+    chain = _PROMPT | llm
+
+    full_text = ""
+    async for chunk in chain.astream({
+        "question": state["question"],
+        "sub_task": sub_task,
+        "context_block": _format_chunks(chunks),
+    }):
+        if isinstance(chunk, AIMessageChunk) and chunk.content:
+            full_text += chunk.content
+            yield chunk.content  # stream raw tokens to the caller
+
+    # Parse the completed text into AnalysisResult manually.
+    import json, re
+    try:
+        json_str = re.search(r'\{.*\}', full_text, re.DOTALL).group()
+        result = AnalysisResult.model_validate(json.loads(json_str))
+    except Exception:
+        result = AnalysisResult(answer=full_text, citations=[], confidence=0.5)
+
+    log.append(f"[analyst] confidence={result.confidence:.2f}, "
+               f"citations={len(result.citations)}")
+
+    yield {
         "analysis": result.model_dump(),
         "confidence_score": float(result.confidence),
         "scratchpad": log,
