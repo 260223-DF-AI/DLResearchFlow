@@ -233,14 +233,14 @@ Teams will design and build **ResearchFlow**, a multi-agent research assistant p
 
 | Component | Technology |
 | ----------- | ------------ |
-| LLM Runtime | AWS Bedrock (Claude 3 Sonnet/Haiku or equivalent) |
+| LLM Runtime | Amazon Nova Pro + Lite (AWS Bedrock) |
 | Agent Framework | LangChain + LangGraph |
 | Vector Database | Pinecone (Serverless) |
-| Embeddings | Sentence Transformers (`all-MiniLM-L6-v2`) or Bedrock Titan Embeddings |
+| Embeddings | Bedrock Titan Embeddings v2 |
 | Evaluation | RAGAS, LangSmith |
 | Testing | pytest, unittest.mock |
-| Deployment | AWS Lambda, API Gateway, AWS SAM |
-| Language | Python 3.11+ |
+| ~~Deployment~~ | ~~AWS Lambda, API Gateway, AWS SAM~~ |
+| Language | Python 3.11.9 |
 
 ---
 

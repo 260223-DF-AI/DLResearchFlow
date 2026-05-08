@@ -1,0 +1,78 @@
+[
+  {
+    "question": "How does a neuron modify inputs?",
+    "ground_truth_answer": "A neuron applies an activation function to its input, introducing non-linearity. This new value is then multiplied by a weight, modifying the strength of the signal to the next neuron.",
+    "ground_truth_contexts": [
+      "Each artificial neuron receives signals from connected neurons, then processes them and sends a signal to other connected neurons. The \"signal\" is a real number, and the output of each neuron is computed by some non-linear function of the totality of its inputs, called the activation function. The strength of the signal at each connection is determined by a weight, which adjusts during the learning process."
+    ]
+  },
+  {
+    "question": "What is deep learning?",
+    "ground_truth_answer": "Deep learning is the field of machine learning primarily concerned with neural networks and the architectures based on neural networks.",
+    "ground_truth_contexts": [
+      "In machine learning, deep learning (DL) focuses on utilizing multilayered neural networks to perform tasks such as classification, regression, and representation learning. The field takes inspiration from biological neuroscience and revolves around stacking artificial neurons into layers and \"training\" them to process data. The adjective \"deep\" refers to the use of multiple layers (ranging from three to several hundred or thousands) in the network. Methods used can be supervised, semi-supervised or unsupervised."
+    ]
+  },
+    {
+    "question": "What does a weight represent in a neural network",
+    "ground_truth_answer": "A weight represents the strength of a signal output from a neuron after the activation function. Large weights increase the magnitude of the signal, while small weights decrease the magnitude. Weights can be positive or negative.",
+    "ground_truth_contexts": [
+      "The strength of the signal at each connection is determined by a weight, which adjusts during the learning process."
+    ]
+  },
+  {
+    "question": "How is text represented in transformers?",
+    "ground_truth_answer": "Text is converted into tokens, which are turned into embeddings to be passed into the transformer. Embeddings are numerical vector representations of the token and its position in the original text.",
+    "ground_truth_contexts": [
+      "First, the input text is treated by a preprocessor, which performs both textual transformations and splits the text into coarse-grained segments called pretokens. The latter is referred to as pretokenization. Second, each pretoken is segmented further into tokens by a tokenizer that expects to only see pretokens output by its preprocessor. Each token it produces is a string of one or more characters belonging to a finite set of strings called the vocabulary V. Third, because the vocabulary is finite and known beforehand, each token can be assigned an integer identifier, and this mapping is applied to the sequence of tokens to represent any input text as a numerical sequence. Since this mapping is bijective, the output side can produce a sequence of integer identifiers which can then be turned back into tokens. After undoing some of the preprocessing, the result is again legible text.",
+      "Each integer token identifier is converted into an embedding vector via a lookup table. Equivalently stated, it multiplies a one-hot representation of the token identifier by an embedding matrix. The token embedding vectors are added to their respective positional encoding vectors (see below), producing the sequence of input vectors. The dimension of an embedding vector is called hidden size or embedding size and written as d_emb. This size is written as d_model in the original transformer paper.",
+      "A positional encoding is a fixed-size vector representation of the relative positions of tokens within a sequence: it provides the transformer model with information about where the words are in the input sequence. This induces a bias towards the order of the input sequence, so that, for example, the input sequence \"man bites dog\" is processed differently from \"dog bites man\"."
+    ]
+  },
+  {
+    "question": "How is loss backpropagated through a feed-forward neural network?",
+    "ground_truth_answer": "The backpropagation algorithm finds the derivative of the loss function with respect to each weight in the network using the chain rule of derivatives.",
+    "ground_truth_contexts": [
+      "Backpropagation computes the gradient in weight space of a feedforward neural network, with respect to a loss function.",
+      "It is an efficient application of the chain rule to neural networks. Backpropagation efficiently computes the gradient of the loss with respect to the network weights for a single input–output example. It does this by propagating derivatives backward, one layer at a time, from the output layer to the input layer, thereby avoiding redundant chain-rule calculations."
+    ]
+  },
+  {
+    "question": "What is the purpose of gradient descent in Deep Learning?",
+    "ground_truth_answer": "Stochastic gradient descent (SGD) is used to optimize the weights and biases in a neural network by approximating the ",
+    "ground_truth_contexts": [
+      "Gradient descent is particularly useful in machine learning and artificial intelligence for minimizing the cost or loss function.",
+      "A simple extension of gradient descent, stochastic gradient descent, serves as the most basic algorithm used for training most deep networks today.",
+      "Stochastic gradient descent (often abbreviated SGD) is an iterative method for optimizing an objective function with suitable smoothness properties (e.g. differentiable or subdifferentiable). It can be regarded as a stochastic approximation of gradient descent optimization, since it replaces the actual gradient (calculated from the entire data set) by an estimate thereof (calculated from a randomly selected subset of the data). Especially in high-dimensional optimization problems this reduces the very high computational burden, achieving faster iterations in exchange for a lower convergence rate."
+    ]
+  },
+  {
+    "question": "What is a decision tree?",
+    "ground_truth_answer": "A decision tree is a machine learning model that represents a decision-making process as a flowchart-like tree structure. At each layer it splits nodes based on feature values that minimizes entropy, resulting in maximum information gained at each node.",
+    "ground_truth_contexts": [
+      ""
+    ]
+  },
+  {
+    "question": "Who was the 16th president of the United States of America?",
+    "ground_truth_answer": "Abraham Lincoln was the 16th president of the United States of America from 1861 to 1865.",
+    "ground_truth_contexts": [
+      ""
+    ]
+  },
+  {
+    "question": "When were LSTM's introduced and widely used?",
+    "ground_truth_answer": "LSTM's were first introduced in the 1997 paper \"Long Short-Term Memory\" (Sepp Hochreiter, Jürgen Schmidhuber). They were first widely used in the 2010's for speech and text.",
+    "ground_truth_contexts": [
+      "The most commonly used reference point for LSTM was published in 1997 in the journal Neural Computation.",
+      "2015: Google started using an LSTM trained by CTC for speech recognition on Google Voice. According to the official blog post, the new model cut transcription errors by 49%. 2016: Google started using an LSTM to suggest messages in the Allo conversation app. In the same year, Google released the Google Neural Machine Translation system for Google Translate which used LSTMs to reduce translation errors by 60%. Apple announced in its Worldwide Developers Conference that it would start using the LSTM for quicktype in the iPhone and for Siri. Amazon released Polly, which generates the voices behind Alexa, using a bidirectional LSTM for the text-to-speech technology."
+    ]
+  },
+  {
+    "question": "Do transformers have infinitely large context windows?",
+    "ground_truth_answer": "Transformers are limitted to a predefined context window, however the size of the window can effectively be infite given supporting hardware and architecture.",
+    "ground_truth_contexts": [
+      "Ordinary transformers require a memory size that is quadratic in the size of the context window."
+    ]
+  }
+]

@@ -44,7 +44,8 @@ PLANNER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You decompose research questions into 1–4 ordered, independently-"
      "answerable sub-tasks. Prefer fewer, larger sub-tasks over many tiny "
-     "ones. Each sub-task should be answerable from a single retrieval.\n\n"
+     "ones. Each sub-task should be answerable from a single retrieval."
+     "Sub-tasks should use specific phrases to prevent generalizing the question.\n\n"
      "Output schema: return JSON with a single key 'subtasks' whose value is "
      "a JSON array of strings. Never return a single concatenated string."),
     ("human",

@@ -17,8 +17,7 @@ from dotenv import load_dotenv
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision
-
-from langchain_aws import ChatBedrock
+from langchain_aws import ChatBedrock, BedrockEmbeddings
 
 from agents.supervisor import build_supervisor_graph
 
@@ -90,15 +89,31 @@ def run_ragas_evaluation(predictions: list[dict], golden: list[dict]) -> dict:
     - Evaluate with metrics: faithfulness, answer_relevancy, context_precision.
     - Return a dict of metric_name → score.
     """
-    
     ds = Dataset.from_list(predictions)
+
+    llm = ChatBedrock(
+        model_id=os.environ["BEDROCK_MODEL_ID"],
+        region_name=os.environ["AWS_REGION"],
+        temperature=0.0,
+    )
+
+    embeddings = BedrockEmbeddings(
+        model_id=os.environ.get("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
+        region_name=os.environ["AWS_REGION"],
+    )
+
     result = evaluate(
         ds,
         metrics=[faithfulness, answer_relevancy, context_precision],
+        llm=llm,
+        embeddings=embeddings,
+        return_executor=False,
     )
+    print(result)
     # `result` is a RAGASResult; `.to_pandas()` gives per-row, but we want
     # the aggregate summary as a flat dict.
-    return {k: float(v) for k, v in result._scores_dict.items()}
+    # return {k: float(v) for k, v in result._scores_dict.items()}
+    return result
 
 
 def main() -> None:
