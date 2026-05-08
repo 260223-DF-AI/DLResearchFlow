@@ -266,7 +266,7 @@ cp .env.example .env
 python scripts/ingest.py --input-dir ./data/corpus --namespace primary-corpus
 
 # 6. Run the research assistant locally
-python main.py --question "What are the key findings on X?"
+python main.py
 
 # 7. Run tests
 pytest tests/ -v
